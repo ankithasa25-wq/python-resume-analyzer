@@ -1,331 +1,845 @@
 from docx import Document
+from PyPDF2 import PdfReader
+import tkinter as tk
+from tkinter import filedialog, messagebox, ttk
+import re
 import os
 
-while True:
+from job_matcher import JOB_ROLES, calculate_match
 
-    print("\n==============================")
-    print("       RESUME ANALYZER")
-    print("==============================")
 
-    print("\n1. Analyze Resume")
-    print("2. Exit")
+# ---------- DATA ----------
 
-    choice = input("\nEnter your choice: ")
+SKILLS = [
+    "Python", "C", "Java", "SQL", "HTML", "CSS",
+    "JavaScript", "Machine Learning", "Data Structures",
+    "Git", "MATLAB"
+]
 
-    if choice == "1":
+SECTIONS = [
+    "Education", "Skills", "Projects",
+    "Certifications", "Experience", "Career Objective"
+]
 
-        resume_folder = "resumes"
+resume_text = ""
+analysis = None
 
-        resume_files = []
 
-        for file in os.listdir(resume_folder):
-            if file.lower().endswith(".docx"):
-                resume_files.append(file)
+# ---------- READ RESUME ----------
 
-        if len(resume_files) == 0:
-            print("\nNo Word resume files found.")
-            continue
+def read_resume(file):
 
-        print("\nAvailable Resumes:")
+    if file.endswith(".docx"):
+        doc = Document(file)
+        return "\n".join(p.text for p in doc.paragraphs)
 
-        for i in range(len(resume_files)):
-            print(i + 1, ".", resume_files[i])
+    if file.endswith(".pdf"):
+        pdf = PdfReader(file)
+        return "\n".join(
+            page.extract_text() or ""
+            for page in pdf.pages
+        )
 
-        file_choice = input("\nEnter resume number: ")
+    return ""
 
-        if not file_choice.isdigit():
-            print("\nInvalid choice.")
-            continue
 
-        file_number = int(file_choice)
+# ---------- ANALYZE RESUME ----------
 
-        if file_number < 1 or file_number > len(resume_files):
-            print("\nInvalid resume number.")
-            continue
+def analyze(text):
 
-        file_name = resume_files[file_number - 1]
+    found = [
+        skill for skill in SKILLS
+        if re.search(
+            r"\b" + re.escape(skill.lower()) + r"\b",
+            text.lower()
+        )
+    ]
 
-        file_path = os.path.join(resume_folder, file_name)
+    missing = [
+        skill for skill in SKILLS
+        if skill not in found
+    ]
 
-        document = Document(file_path)
+    sections = [
+        section for section in SECTIONS
+        if section.lower() in text.lower()
+    ]
 
-        text = ""
+    words = len(
+        re.findall(r"\b\w+\b", text)
+    )
 
-        for paragraph in document.paragraphs:
-            text += paragraph.text + "\n"
+    skills_score = round(
+        len(found) / len(SKILLS) * 60
+    )
 
-        resume_text = text.lower()
+    section_score = round(
+        len(sections) / len(SECTIONS) * 30
+    )
 
-        word_count = len(text.split())
+    content_score = round(
+        min(words / 300, 1) * 10
+    )
 
-        # Skills
-        skill_variations = {
-            "Python": ["python", "python programming"],
-            "C": ["c programming", "c language"],
-            "Java": ["java"],
-            "SQL": ["sql", "mysql"],
-            "HTML": ["html"],
-            "CSS": ["css"],
-            "JavaScript": ["javascript"],
-            "MATLAB": ["matlab"],
-            "Machine Learning": ["machine learning", "ml"],
-            "Data Structures": ["data structures", "dsa"],
-            "Git": ["git", "github"]
-        }
+    total_score = (
+        skills_score +
+        section_score +
+        content_score
+    )
 
-        found_skills = []
-        missing_skills = []
+    return (
+        words,
+        found,
+        missing,
+        sections,
+        skills_score,
+        section_score,
+        content_score,
+        total_score
+    )
 
-        for skill, variations in skill_variations.items():
 
-            skill_found = False
+# ---------- ATS KEYWORDS ----------
 
-            for variation in variations:
-                if variation in resume_text:
-                    skill_found = True
-                    break
+def get_keywords(text):
 
-            if skill_found:
-                found_skills.append(skill)
-            else:
-                missing_skills.append(skill)
+    words = re.findall(
+        r"\b[a-zA-Z][a-zA-Z+#.]*\b",
+        text.lower()
+    )
 
-        # Sections
-        sections = [
-            "Education",
-            "Skills",
-            "Projects",
-            "Certifications",
-            "Experience",
-            "Career Objective"
+    count = {}
+
+    for word in words:
+
+        if len(word) >= 4:
+            count[word] = count.get(word, 0) + 1
+
+    return sorted(
+        count.items(),
+        key=lambda x: x[1],
+        reverse=True
+    )[:10]
+
+
+# ---------- CHOOSE RESUME ----------
+
+def choose_resume():
+
+    global resume_text, analysis
+
+    file = filedialog.askopenfilename(
+        title="Select Resume",
+        filetypes=[
+            ("Resume Files", "*.docx *.pdf"),
+            ("Word Document", "*.docx"),
+            ("PDF File", "*.pdf")
         ]
+    )
 
-        found_sections = []
+    if not file:
+        return
 
-        for section in sections:
-            if section.lower() in resume_text:
-                found_sections.append(section)
+    resume_text = read_resume(file)
+    analysis = None
 
-        # Resume score
-        score = 0
+    file_label.config(
+        text=os.path.basename(file)
+    )
 
-        skill_score = int((len(found_skills) / len(skill_variations)) * 40)
-        score += skill_score
+    result.delete(
+        "1.0",
+        tk.END
+    )
 
-        section_score = int((len(found_sections) / len(sections)) * 30)
-        score += section_score
+    graph.delete(
+        "all"
+    )
 
-        if word_count >= 300:
-            word_score = 20
-        elif word_count >= 200:
-            word_score = 15
-        elif word_count >= 100:
-            word_score = 10
-        else:
-            word_score = 5
+    result.insert(
+        tk.END,
+        "Resume selected successfully.\n\n"
+        "Choose a job role and click "
+        "'Analyze Resume'."
+    )
 
-        score += word_score
 
-        if "Certifications" in found_sections:
-            certification_score = 10
-        else:
-            certification_score = 0
+# ---------- ANALYZE ----------
 
-        score += certification_score
+def analyze_resume():
 
-        # Display analysis
-        print("\n------------------------------")
-        print("RESUME ANALYSIS")
-        print("------------------------------")
+    global analysis
 
-        print("Resume:", file_name)
-        print("Total words:", word_count)
+    if not resume_text:
 
-        print("\nSkills Found:")
+        messagebox.showwarning(
+            "No Resume",
+            "Please select a resume first."
+        )
 
-        for skill in found_skills:
-            print("-", skill)
+        return
 
-        print("Total skills found:", len(found_skills))
+    analysis = analyze(
+        resume_text
+    )
 
-        print("\nMissing Skills:")
+    (
+        words,
+        found,
+        missing,
+        sections,
+        skills_score,
+        section_score,
+        content_score,
+        total_score
+    ) = analysis
 
-        for skill in missing_skills:
-            print("-", skill)
+    show_results()
 
-        print("\nResume Sections Found:")
 
-        for section in found_sections:
-            print("-", section)
+# ---------- SHOW RESULTS ----------
 
-        print("Total sections found:", len(found_sections))
+def show_results():
 
-        print("\nResume Score:", score, "/ 100")
+    (
+        words,
+        found,
+        missing,
+        sections,
+        skills_score,
+        section_score,
+        content_score,
+        total_score
+    ) = analysis
 
-        # Suggestions
-        print("\nSuggestions:")
+    role = role_box.get()
 
-        if "Certifications" not in found_sections:
-            print("- Consider adding a Certifications section.")
+    match, matched, missing_job = calculate_match(
+        resume_text,
+        JOB_ROLES[role]
+    )
 
-        if len(found_skills) < 5:
-            print("- Consider adding more relevant technical skills.")
+    keywords = get_keywords(
+        resume_text
+    )
 
-        if word_count < 250:
-            print("- Consider adding more relevant resume content.")
+    result.delete(
+        "1.0",
+        tk.END
+    )
 
-        if len(found_skills) >= 5 and len(found_sections) >= 5:
-            print("- Your resume has good basic coverage.")
+    result.insert(
+        tk.END,
+        "RESUME ANALYSIS\n",
+        "title"
+    )
 
-        # Job roles
-        job_roles = {
-            "Python Developer": [
-                "Python",
-                "Data Structures",
-                "SQL",
-                "Git"
-            ],
-            "Data Analyst": [
-                "Python",
-                "SQL",
-                "Data Structures",
-                "MATLAB"
-            ],
-            "Machine Learning": [
-                "Python",
-                "Machine Learning",
-                "Data Structures",
-                "MATLAB"
-            ]
-        }
+    result.insert(
+        tk.END,
+        "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+    )
 
-        print("\nAvailable Job Roles:")
-        print("1. Python Developer")
-        print("2. Data Analyst")
-        print("3. Machine Learning")
+    result.insert(
+        tk.END,
+        f"Resume: {file_label.cget('text')}\n"
+        f"Total Words: {words}\n\n"
+    )
 
-        role_choice = input("\nEnter job role number: ")
+    result.insert(
+        tk.END,
+        "SKILLS FOUND\n",
+        "heading"
+    )
 
-        if role_choice == "1":
-            role = "Python Developer"
-        elif role_choice == "2":
-            role = "Data Analyst"
-        elif role_choice == "3":
-            role = "Machine Learning"
-        else:
-            role = ""
+    result.insert(
+        tk.END,
+        ", ".join(found) + "\n\n"
+    )
 
-        if role:
+    result.insert(
+        tk.END,
+        "MISSING SKILLS\n",
+        "heading"
+    )
 
-            required_skills = job_roles[role]
+    result.insert(
+        tk.END,
+        ", ".join(missing) + "\n\n"
+    )
 
-            matched_skills = []
-            missing_job_skills = []
+    result.insert(
+        tk.END,
+        "RESUME SECTIONS\n",
+        "heading"
+    )
 
-            for required_skill in required_skills:
+    result.insert(
+        tk.END,
+        ", ".join(sections) + "\n\n"
+    )
 
-                variations = skill_variations[required_skill]
+    result.insert(
+        tk.END,
+        "SCORE BREAKDOWN\n",
+        "heading"
+    )
 
-                skill_found = False
+    result.insert(
+        tk.END,
+        f"Skills      : {skills_score}/60\n"
+        f"Sections    : {section_score}/30\n"
+        f"Content     : {content_score}/10\n"
+        f"Overall     : {total_score}/100\n\n"
+    )
 
-                for variation in variations:
-                    if variation in resume_text:
-                        skill_found = True
-                        break
+    result.insert(
+        tk.END,
+        "JOB MATCH\n",
+        "heading"
+    )
 
-                if skill_found:
-                    matched_skills.append(required_skill)
-                else:
-                    missing_job_skills.append(required_skill)
+    result.insert(
+        tk.END,
+        f"Role        : {role}\n"
+        f"Match       : {match}%\n\n"
+    )
 
-            match_percentage = int(
-                (len(matched_skills) / len(required_skills)) * 100
+    result.insert(
+        tk.END,
+        "MATCHING JOB SKILLS\n",
+        "heading"
+    )
+
+    result.insert(
+        tk.END,
+        ", ".join(matched) + "\n\n"
+    )
+
+    result.insert(
+        tk.END,
+        "MISSING JOB SKILLS\n",
+        "heading"
+    )
+
+    result.insert(
+        tk.END,
+        ", ".join(missing_job) + "\n\n"
+    )
+
+    result.insert(
+        tk.END,
+        "TOP ATS KEYWORDS\n",
+        "heading"
+    )
+
+    for word, number in keywords:
+
+        result.insert(
+            tk.END,
+            f"• {word}: {number}\n"
+        )
+
+    draw_graph()
+
+
+# ---------- GRAPH ----------
+
+def draw_graph():
+
+    graph.delete(
+        "all"
+    )
+
+    scores = [
+        analysis[4],
+        analysis[5],
+        analysis[6],
+        analysis[7]
+    ]
+
+    labels = [
+        "Skills",
+        "Sections",
+        "Content",
+        "Overall"
+    ]
+
+    graph_width = 600
+    graph_height = 250
+
+    bar_width = 80
+    gap = 55
+
+    for i, score in enumerate(scores):
+
+        x1 = 35 + i * (
+            bar_width + gap
+        )
+
+        x2 = x1 + bar_width
+
+        y2 = 215
+
+        y1 = y2 - (
+            score / 100 * 170
+        )
+
+        graph.create_rectangle(
+            x1,
+            y1,
+            x2,
+            y2,
+            fill="#4A90E2",
+            outline=""
+        )
+
+        graph.create_text(
+            (x1 + x2) / 2,
+            y1 - 12,
+            text=str(score),
+            font=("Arial", 10, "bold")
+        )
+
+        graph.create_text(
+            (x1 + x2) / 2,
+            235,
+            text=labels[i],
+            font=("Arial", 10)
+        )
+
+    graph.create_text(
+        graph_width / 2,
+        15,
+        text="Resume Score",
+        font=("Arial", 14, "bold")
+    )
+
+
+# ---------- SAVE REPORT ----------
+
+def save_report():
+
+    if not analysis:
+
+        messagebox.showwarning(
+            "No Analysis",
+            "Analyze the resume first."
+        )
+
+        return
+
+    os.makedirs(
+        "reports",
+        exist_ok=True
+    )
+
+    role = role_box.get()
+
+    match, matched, missing_job = calculate_match(
+        resume_text,
+        JOB_ROLES[role]
+    )
+
+    keywords = get_keywords(
+        resume_text
+    )
+
+    (
+        words,
+        found,
+        missing,
+        sections,
+        skills_score,
+        section_score,
+        content_score,
+        total_score
+    ) = analysis
+
+    path = "reports/resume_analysis_report.txt"
+
+    with open(
+        path,
+        "w",
+        encoding="utf-8"
+    ) as file:
+
+        file.write(
+            "RESUME ANALYZER REPORT\n"
+            "======================\n\n"
+        )
+
+        file.write(
+            f"Total Words: {words}\n"
+            f"Skills Score: {skills_score}/60\n"
+            f"Sections Score: {section_score}/30\n"
+            f"Content Score: {content_score}/10\n"
+            f"Overall Score: {total_score}/100\n\n"
+        )
+
+        file.write(
+            "Skills Found:\n"
+            + ", ".join(found)
+            + "\n\n"
+        )
+
+        file.write(
+            "Missing Skills:\n"
+            + ", ".join(missing)
+            + "\n\n"
+        )
+
+        file.write(
+            "Resume Sections:\n"
+            + ", ".join(sections)
+            + "\n\n"
+        )
+
+        file.write(
+            f"Selected Role: {role}\n"
+            f"Job Match: {match}%\n\n"
+        )
+
+        file.write(
+            "Matching Job Skills:\n"
+            + ", ".join(matched)
+            + "\n\n"
+        )
+
+        file.write(
+            "Missing Job Skills:\n"
+            + ", ".join(missing_job)
+            + "\n\n"
+        )
+
+        file.write(
+            "Top ATS Keywords:\n"
+        )
+
+        for word, number in keywords:
+
+            file.write(
+                f"- {word}: {number}\n"
             )
 
-            print("\nJob Role:", role)
+    messagebox.showinfo(
+        "Report Saved",
+        f"Report saved to:\n{path}"
+    )
 
-            print("Matched Skills:")
 
-            for skill in matched_skills:
-                print("-", skill)
+# ---------- MAIN WINDOW ----------
 
-            print("Missing Skills:")
+window = tk.Tk()
 
-            for skill in missing_job_skills:
-                print("-", skill)
+window.title(
+    "Resume Analyzer"
+)
 
-            print("Job Match:", match_percentage, "%")
+window.geometry(
+    "1000x750"
+)
 
-            # Final summary
-            print("\nFinal Analysis Summary")
-            print("----------------------")
-            print("Resume Score:", score, "/ 100")
-            print("Selected Role:", role)
-            print("Job Match:", match_percentage, "%")
+window.configure(
+    bg="#F4F6F8"
+)
 
-            # Save report
-            report_folder = "reports"
 
-            if not os.path.exists(report_folder):
-                os.makedirs(report_folder)
+# Header
 
-            report_path = os.path.join(
-                report_folder,
-                "resume_analysis_report.txt"
-            )
+header = tk.Frame(
+    window,
+    bg="#1F3A5F",
+    height=90
+)
 
-            with open(report_path, "w") as report:
+header.pack(
+    fill="x"
+)
 
-                report.write("RESUME ANALYZER REPORT\n")
-                report.write("======================\n\n")
+tk.Label(
+    header,
+    text="RESUME ANALYZER",
+    bg="#1F3A5F",
+    fg="white",
+    font=("Arial", 24, "bold")
+).pack(
+    pady=(15, 2)
+)
 
-                report.write("Resume: " + file_name + "\n")
-                report.write("Total Words: " + str(word_count) + "\n")
-                report.write("Resume Score: " + str(score) + "/100\n\n")
+tk.Label(
+    header,
+    text="Analyze • Match • Improve",
+    bg="#1F3A5F",
+    fg="white",
+    font=("Arial", 11)
+).pack()
 
-                report.write("Skills Found:\n")
 
-                for skill in found_skills:
-                    report.write("- " + skill + "\n")
+# File section
 
-                report.write("\nMissing Skills:\n")
+file_frame = tk.Frame(
+    window,
+    bg="white",
+    bd=1,
+    relief="solid"
+)
 
-                for skill in missing_skills:
-                    report.write("- " + skill + "\n")
+file_frame.pack(
+    fill="x",
+    padx=25,
+    pady=15
+)
 
-                report.write("\nResume Sections Found:\n")
+tk.Label(
+    file_frame,
+    text="Resume",
+    bg="white",
+    font=("Arial", 12, "bold")
+).pack(
+    side="left",
+    padx=15,
+    pady=15
+)
 
-                for section in found_sections:
-                    report.write("- " + section + "\n")
+file_label = tk.Label(
+    file_frame,
+    text="No resume selected",
+    bg="white",
+    fg="#666666",
+    width=45,
+    anchor="w"
+)
 
-                report.write("\nSelected Job Role: " + role + "\n")
-                report.write(
-                    "Job Match: "
-                    + str(match_percentage)
-                    + "%\n"
-                )
+file_label.pack(
+    side="left"
+)
 
-                report.write("\nMatched Job Skills:\n")
+tk.Button(
+    file_frame,
+    text="Choose Resume",
+    command=choose_resume,
+    bg="#4A90E2",
+    fg="white",
+    font=("Arial", 10, "bold"),
+    padx=10,
+    pady=5
+).pack(
+    side="right",
+    padx=15
+)
 
-                for skill in matched_skills:
-                    report.write("- " + skill + "\n")
 
-                report.write("\nMissing Job Skills:\n")
+# Job role section
 
-                for skill in missing_job_skills:
-                    report.write("- " + skill + "\n")
+role_frame = tk.Frame(
+    window,
+    bg="white",
+    bd=1,
+    relief="solid"
+)
 
-            print("\nReport saved successfully!")
-            print("Location:", report_path)
+role_frame.pack(
+    fill="x",
+    padx=25,
+    pady=5
+)
 
-        else:
-            print("Invalid job role.")
+tk.Label(
+    role_frame,
+    text="Target Job Role",
+    bg="white",
+    font=("Arial", 11, "bold")
+).pack(
+    side="left",
+    padx=15,
+    pady=12
+)
 
-    elif choice == "2":
+role_box = ttk.Combobox(
+    role_frame,
+    values=list(JOB_ROLES.keys()),
+    state="readonly",
+    width=30
+)
 
-        print("\nThank you for using Resume Analyzer!")
-        break
+role_box.pack(
+    side="left"
+)
 
-    else:
+role_box.current(0)
 
-        print("\nInvalid choice.")
+
+def role_changed(event):
+    if analysis:
+        show_results()
+
+
+role_box.bind(
+    "<<ComboboxSelected>>",
+    role_changed
+)
+
+
+tk.Button(
+    role_frame,
+    text="Analyze Resume",
+    command=analyze_resume,
+    bg="#2E7D32",
+    fg="white",
+    font=("Arial", 10, "bold"),
+    padx=12,
+    pady=5
+).pack(
+    side="right",
+    padx=15
+)
+
+
+# Main content
+
+content = tk.Frame(
+    window,
+    bg="#F4F6F8"
+)
+
+content.pack(
+    fill="both",
+    expand=True,
+    padx=25,
+    pady=15
+)
+
+
+# Results
+
+result_frame = tk.Frame(
+    content,
+    bg="white",
+    bd=1,
+    relief="solid"
+)
+
+result_frame.pack(
+    side="left",
+    fill="both",
+    expand=True,
+    padx=(0, 10)
+)
+
+tk.Label(
+    result_frame,
+    text="Analysis Results",
+    bg="white",
+    font=("Arial", 13, "bold")
+).pack(
+    pady=10
+)
+
+result = tk.Text(
+    result_frame,
+    bg="white",
+    fg="#222222",
+    font=("Consolas", 10),
+    bd=0,
+    wrap="word"
+)
+
+result.pack(
+    fill="both",
+    expand=True,
+    padx=15,
+    pady=5
+)
+
+result.tag_config(
+    "title",
+    font=("Arial", 16, "bold")
+)
+
+result.tag_config(
+    "heading",
+    font=("Arial", 11, "bold")
+)
+
+
+# Graph
+
+graph_frame = tk.Frame(
+    content,
+    bg="white",
+    bd=1,
+    relief="solid",
+    width=320
+)
+
+graph_frame.pack(
+    side="right",
+    fill="y"
+)
+
+tk.Label(
+    graph_frame,
+    text="Score Graph",
+    bg="white",
+    font=("Arial", 13, "bold")
+).pack(
+    pady=10
+)
+
+graph = tk.Canvas(
+    graph_frame,
+    width=500,
+    height=270,
+    bg="white",
+    highlightthickness=0
+)
+
+graph.pack(
+    padx=10
+)
+
+
+# Bottom buttons
+
+bottom = tk.Frame(
+    window,
+    bg="#F4F6F8"
+)
+
+bottom.pack(
+    pady=10
+)
+
+tk.Button(
+    bottom,
+    text="Save Report",
+    command=save_report,
+    bg="#6A1B9A",
+    fg="white",
+    font=("Arial", 10, "bold"),
+    width=18,
+    pady=7
+).pack(
+    side="left",
+    padx=8
+)
+
+tk.Button(
+    bottom,
+    text="Clear",
+    command=lambda: result.delete(
+        "1.0",
+        tk.END
+    ),
+    bg="#757575",
+    fg="white",
+    font=("Arial", 10, "bold"),
+    width=18,
+    pady=7
+).pack(
+    side="left",
+    padx=8
+)
+
+
+window.mainloop()

@@ -1,2 +1,4 @@
 .venv/
 .idea/
+script_backup.py
+reports/
